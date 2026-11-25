@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Password Hashing Lab｜同一個密碼，為什麼會有兩個雜湊？</title>
+<style>
+:root { color-scheme: light dark; --paper: #fbfaf6; --ink: #202822; --accent: #245c46; --line: #cbd5cb; --code: #e9eee8; }
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #151d19; --ink: #ebf0e8; --accent: #9edbbe; --line: #44584d; --code: #233029; }
+}
+body { margin: 0; background: var(--paper); color: var(--ink); font: 1.05rem/1.8 system-ui, sans-serif; }
+main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem; }
+header { padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
+header p { color: var(--accent); }
+h1 { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.2; margin: .4em 0; }
+h2 { margin-top: 2.2rem; line-height: 1.35; }
+a { color: var(--accent); text-underline-offset: .2em; }
+pre { padding: 1rem; overflow-x: auto; background: var(--code); border-radius: .5rem; }
+code { font: .875rem/1.6 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<main>
+<article>
+<header>
+<p>Password Hashing Lab</p>
+<h1>同一個密碼，為什麼會有兩個雜湊？</h1>
+</header>
+<p>我用 Python 做了一個小實驗：把同一個測試密碼分別用 SHA-256 和 Argon2id 各雜湊兩次，再用原本的密碼驗證兩組 Argon2id 結果。想看的是，當雜湊字串不一樣時，兩組結果還能不能驗證同一個密碼。</p>
+
+<h2>先看實驗結果</h2>
+<pre><code>SHA-256 results equal: True
+Argon2id results equal: False
+Argon2id verification 1: True
+Argon2id verification 2: True</code></pre>
+<p>SHA-256 的兩個輸出一樣，因為輸入是同一組 UTF-8 位元組。SHA-256 適合一般雜湊，例如檢查檔案完整性，但不適合直接儲存密碼。它算得快，拿到外洩雜湊的人也能快速試很多組猜測。</p>
+<p>Argon2id 是為密碼雜湊設計的。每次呼叫 <code>hash()</code> 都會產生新的隨機 salt，所以兩個輸出通常不同。每個 encoded hash 都帶著自己的 salt 和參數，<code>verify()</code> 會用它們驗證輸入，因此兩組結果都能驗證成功。Argon2id 也讓每次猜測需要時間和記憶體，但容易猜到的密碼仍有風險。</p>
+
+<h2>在本機跑一次</h2>
+<p>把下面的程式碼存成 <code>password_hashing_lab.py</code>。用 Python 3.11 或更新版本，在 macOS 或 Linux 的終端執行：</p>
+<pre><code>python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install "argon2-cffi&gt;=25.1,&lt;26"
+python password_hashing_lab.py</code></pre>
+<p>這是教育實驗，請輸入像 <code>hello123</code> 這樣的測試值。終端會隱藏輸入，程式只印比較和驗證結果。驗證成功回傳 <code>True</code>，密碼不符回傳 <code>False</code>，格式錯誤等其他例外則會傳給呼叫端。</p>
+
+<h2>完整 Python 程式碼</h2>
+<pre tabindex="0"><code>"""Compare general-purpose hashing and password hashing with a test password."""
+
+import hashlib
+import warnings
+from getpass import GetPassWarning, getpass
+
+from argon2 import PasswordHasher, Type
+from argon2.exceptions import VerifyMismatchError
+
+_password_hasher = PasswordHasher(type=Type.ID)
+
+
+def sha256_hash(password: str) -&gt; str:
+    """Return the SHA-256 hex digest of the UTF-8 input."""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def argon2_hash(password: str) -&gt; str:
+    """Return an encoded Argon2id hash with a fresh random salt."""
+    return _password_hasher.hash(password)
+
+
+def verify_password(password: str, encoded_hash: str) -&gt; bool:
+    """Return False for a password mismatch and propagate other errors."""
+    try:
+        return _password_hasher.verify(encoded_hash, password)
+    except VerifyMismatchError:
+        return False
+
+
+def compare_hashes(password: str) -&gt; None:
+    """Print equality and verification results without displaying the hashes."""
+    sha_hash1 = sha256_hash(password)
+    sha_hash2 = sha256_hash(password)
+    argon_hash1 = argon2_hash(password)
+    argon_hash2 = argon2_hash(password)
+
+    verified1 = verify_password(password, argon_hash1)
+    verified2 = verify_password(password, argon_hash2)
+
+    print(f"SHA-256 results equal: {sha_hash1 == sha_hash2}")
+    print(f"Argon2id results equal: {argon_hash1 == argon_hash2}")
+    print(f"Argon2id verification 1: {verified1}")
+    print(f"Argon2id verification 2: {verified2}")
+
+
+def main() -&gt; int:
+    """Run the experiment using a no-echo terminal prompt."""
+    print("Welcome to Password Hashing Lab!")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GetPassWarning)
+            password = getpass("Enter a test password (never use a real password): ")
+    except GetPassWarning:
+        print("Hidden input is unavailable. Run the lab in an interactive terminal.")
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print("\nExperiment cancelled.")
+        return 1
+
+    compare_hashes(password)
+    print("Experiment completed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+</code></pre>
+
+<h2>參考資料</h2>
+<ul>
+<li><a href="https://argon2-cffi.readthedocs.io/en/stable/api.html">argon2-cffi API Reference</a></li>
+<li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html">OWASP Password Storage Cheat Sheet</a></li>
+</ul>
+</article>
+</main>
+</body>
+</html>
