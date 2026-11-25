@@ -15,6 +15,8 @@ header { padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
 header p { color: var(--accent); }
 h1 { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.2; margin: .4em 0; }
 h2 { margin-top: 2.2rem; line-height: 1.35; }
+details { padding: .6rem 1rem; border: 1px solid var(--line); border-radius: .5rem; }
+summary { cursor: pointer; color: var(--accent); }
 a { color: var(--accent); text-underline-offset: .2em; }
 pre { padding: 1rem; overflow-x: auto; background: var(--code); border-radius: .5rem; }
 code { font: .875rem/1.6 ui-monospace, monospace; }
@@ -27,23 +29,41 @@ code { font: .875rem/1.6 ui-monospace, monospace; }
 <p>Password Hashing Lab</p>
 <h1>同一個密碼，為什麼會有兩個雜湊？</h1>
 </header>
-<p>我用 Python 做了一個小實驗：把同一個測試密碼分別用 SHA-256 和 Argon2id 各雜湊兩次，再用原本的密碼驗證兩組 Argon2id 結果。想看的是，當雜湊字串不一樣時，兩組結果還能不能驗證同一個密碼。</p>
+<p>如果兩個不同的雜湊字串都能驗證同一個密碼，程式是不是寫錯了？我們用一個測試密碼做四次雜湊，先猜結果，再用 Python 一步一步確認。</p>
 
-<h2>先看實驗結果</h2>
-<pre><code>SHA-256 results equal: True
-Argon2id results equal: False
-Argon2id verification 1: True
-Argon2id verification 2: True</code></pre>
-<p>SHA-256 的兩個輸出一樣，因為輸入是同一組 UTF-8 位元組。SHA-256 適合一般雜湊，例如檢查檔案完整性，但不適合直接儲存密碼。它算得快，拿到外洩雜湊的人也能快速試很多組猜測。</p>
-<p>Argon2id 是為密碼雜湊設計的。每次呼叫 <code>hash()</code> 都會產生新的隨機 salt，所以兩個輸出通常不同。每個 encoded hash 都帶著自己的 salt 和參數，<code>verify()</code> 會用它們驗證輸入，因此兩組結果都能驗證成功。Argon2id 也讓每次猜測需要時間和記憶體，但容易猜到的密碼仍有風險。</p>
+<h2>第一步｜什麼是雜湊？</h2>
+<p>雜湊函式把一段資料轉成摘要（digest）。SHA-256 的摘要固定是 256 位元，無論輸入是一個字還是一整份檔案。對同一個函式而言，相同的輸入會產生相同的摘要。密碼學雜湊也設計成很難從摘要反推出原始輸入，但如果輸入容易猜，仍然可以把猜到的值拿去雜湊，看摘要是否吻合。</p>
 
-<h2>在本機跑一次</h2>
-<p>把下面的程式碼存成 <code>password_hashing_lab.py</code>。用 Python 3.11 或更新版本，在 macOS 或 Linux 的終端執行：</p>
+<h2>第二步｜用 SHA-256 看什麼叫「相同輸入」</h2>
+<p>SHA-256 是 SHA-2 家族的通用密碼學雜湊函式，常用來檢查資料完整性。例如，下載檔案後可以計算它的摘要，再與可信來源提供的摘要比較。Python 的 <code>hashlib.sha256()</code> 接收位元組，所以 <code>sha256_hash()</code> 先用 UTF-8 編碼文字。<code>hexdigest()</code> 再把 256 位元的摘要表示成 64 個十六進位字元。</p>
+<p>先猜一下：把 <code>"hello123"</code> 傳給 <code>sha256_hash()</code> 兩次，兩個摘要會一樣嗎？如果第二次改成 <code>"hello123 "</code>，多出來的空格算不算輸入的一部分？</p>
+<details><summary>看答案</summary><p>第一次比較會得到 <code>True</code>。加上空格後，UTF-8 位元組已經變了，這兩個測試值的摘要不同。SHA-256 算得快，這對檔案完整性檢查有用，但直接用來儲存密碼會讓取得雜湊的人快速測試大量猜測。</p></details>
+
+<h2>第三步｜用 Argon2id 觀察 salt 的作用</h2>
+<p>Argon2id 是 Argon2 家族中用於密碼雜湊的變體。它用可調整的記憶體和運算成本讓每次猜測更昂貴。在這個實驗裡，<code>argon2_hash()</code> 每呼叫一次 <code>PasswordHasher.hash()</code>，函式庫就會產生一份隨機 salt。Salt 是加入雜湊運算的資料，可以和摘要存放在一起。</p>
+<p>現在再猜一次：同一個密碼連續雜湊兩次，兩個 Argon2id 字串會相同嗎？如果兩個字串不同，<code>verify_password()</code> 要用哪一份 salt？</p>
+<details><summary>看答案</summary><p>兩個字串通常不同。每個 encoded hash 都帶著自己的 salt、版本、成本參數和摘要。驗證時，函式庫從該字串讀取原本的 salt 和參數，用你這次輸入的密碼重算，再檢查摘要是否吻合。用新 salt 再呼叫一次 <code>hash()</code>，測到的是一次新的雜湊。</p></details>
+
+<h2>第四步｜執行程式，對照你的預測</h2>
+<p>把文末的完整程式碼存成 <code>password_hashing_lab.py</code>。用 Python 3.11 或更新版本，在 macOS 或 Linux 的終端執行以下指令。</p>
 <pre><code>python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install "argon2-cffi&gt;=25.1,&lt;26"
 python password_hashing_lab.py</code></pre>
-<p>這是教育實驗，請輸入像 <code>hello123</code> 這樣的測試值。終端會隱藏輸入，程式只印比較和驗證結果。驗證成功回傳 <code>True</code>，密碼不符回傳 <code>False</code>，格式錯誤等其他例外則會傳給呼叫端。</p>
+<p>輸入一次性測試值，例如 <code>hello123</code>。終端會隱藏輸入，程式只印出比較與驗證結果。</p>
+<pre><code>SHA-256 results equal: True
+Argon2id results equal: False
+Argon2id verification 1: True
+Argon2id verification 2: True</code></pre>
+<p>前兩行比較的是字串，後兩行問的是輸入能否通過各自的驗證。把第二行的 <code>False</code> 和後兩行的 <code>True</code> 放在一起看，就能區分「兩個雜湊一不一樣」和「密碼對不對」。</p>
+
+<h2>加練｜故意給一個錯誤密碼</h2>
+<p>留在同一個資料夾，輸入 <code>python</code> 進入互動模式。先猜最後兩行會各回傳什麼，再逐行執行。</p>
+<pre><code>from password_hashing_lab import argon2_hash, verify_password
+encoded = argon2_hash("hello123")
+verify_password("hello123", encoded)
+verify_password("hello124", encoded)</code></pre>
+<details><summary>看答案</summary><p>第一個驗證回傳 <code>True</code>，第二個回傳 <code>False</code>。如果把 <code>encoded</code> 換成無效的雜湊字串，程式會讓例外傳給呼叫端。這讓呼叫端能分辨密碼輸入錯誤和雜湊資料格式出錯。</p></details>
 
 <h2>完整 Python 程式碼</h2>
 <pre tabindex="0"><code>"""Compare general-purpose hashing and password hashing with a test password."""
@@ -117,6 +137,8 @@ if __name__ == "__main__":
 
 <h2>參考資料</h2>
 <ul>
+<li><a href="https://csrc.nist.gov/pubs/fips/180-4/upd1/final">NIST FIPS 180-4 Secure Hash Standard</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/rfc9106.html">RFC 9106 Argon2</a></li>
 <li><a href="https://argon2-cffi.readthedocs.io/en/stable/api.html">argon2-cffi API Reference</a></li>
 <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html">OWASP Password Storage Cheat Sheet</a></li>
 </ul>
